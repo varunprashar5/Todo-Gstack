@@ -55,6 +55,8 @@ export const useTodosStore = create<TodosState>()(
         })
       },
 
+      // Empty / whitespace / zero-width-only edits DELETE the todo
+      // (TodoMVC convention — also matches intent when users clear the field).
       editTodo: (id, text) => {
         const trimmed = cleanText(text)
         set((state) => {

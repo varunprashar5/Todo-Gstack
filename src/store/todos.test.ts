@@ -9,6 +9,8 @@ import {
 
 const reset = () => {
   localStorage.clear()
+  // Second arg `false` = merge (Zustand default) — keep action closures intact
+  // while replacing the data slices.
   useTodosStore.setState({ todos: [], filter: 'all' }, false)
 }
 
@@ -109,6 +111,13 @@ describe('editTodo', () => {
     state().addTodo('to-delete')
     const id = state().todos[0].id
     state().editTodo(id, '   \t')
+    expect(state().todos).toHaveLength(0)
+  })
+
+  it('deletes the todo when edited to zero-width-only (parallels addTodo)', () => {
+    state().addTodo('to-delete')
+    const id = state().todos[0].id
+    state().editTodo(id, '\u200B\u200C\uFEFF')
     expect(state().todos).toHaveLength(0)
   })
 
@@ -250,31 +259,70 @@ describe('persist rehydrate error handling', () => {
     warnSpy.mockRestore()
   })
 
-  it('clears the corrupt blob so subsequent loads do not re-fail', async () => {
+  it('clears the corrupt blob AND re-persists a valid empty snapshot', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     localStorage.setItem('todo-gstack-v1', '{broken')
 
     await useTodosStore.persist.rehydrate()
 
-    // After the reset re-persists, the key should contain a valid empty state —
-    // critically, NOT the original broken string.
     const raw = localStorage.getItem('todo-gstack-v1')
     expect(raw).not.toBe('{broken')
+    expect(raw).toBeTruthy() // should have re-written a valid blob
+    const parsed = JSON.parse(raw!)
+    expect(parsed.state.todos).toEqual([])
+    expect(parsed.state.filter).toBe('all')
+    expect(parsed.version).toBe(1)
     warnSpy.mockRestore()
+  })
+
+  it('rehydrates valid persisted data back into the store (happy path)', async () => {
+    localStorage.setItem(
+      'todo-gstack-v1',
+      JSON.stringify({
+        state: {
+          todos: [
+            { id: 'abc', text: 'persisted one', done: false },
+            { id: 'def', text: 'persisted two', done: true },
+          ],
+          filter: 'active',
+        },
+        version: 1,
+      }),
+    )
+
+    await useTodosStore.persist.rehydrate()
+
+    expect(state().todos).toHaveLength(2)
+    expect(state().todos[0]).toMatchObject({ text: 'persisted one', done: false })
+    expect(state().todos[1]).toMatchObject({ text: 'persisted two', done: true })
+    expect(state().filter).toBe('active')
   })
 })
 
 describe('persist quota handling', () => {
-  it('swallows quota errors on write without crashing the caller', () => {
+  it('swallows quota errors on every mutating action', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    // Seed with one valid todo BEFORE mocking setItem, so subsequent actions
+    // have something to toggle/edit/remove/reorder.
+    state().addTodo('seed-a')
+    state().addTodo('seed-b')
+    const [a] = state().todos
+
     const setItemSpy = vi
       .spyOn(Storage.prototype, 'setItem')
       .mockImplementation(() => {
         throw new DOMException('QuotaExceededError', 'QuotaExceededError')
       })
 
-    // Should NOT throw — persist adapter must catch.
+    // Every action that triggers a persist write must NOT throw.
     expect(() => state().addTodo('one')).not.toThrow()
+    expect(() => state().toggleTodo(a.id)).not.toThrow()
+    expect(() => state().editTodo(a.id, 'renamed')).not.toThrow()
+    expect(() => state().reorder(a.id, state().todos[1].id)).not.toThrow()
+    expect(() => state().setFilter('done')).not.toThrow()
+    expect(() => state().removeTodo(a.id)).not.toThrow()
+
     expect(warnSpy).toHaveBeenCalled()
 
     setItemSpy.mockRestore()
