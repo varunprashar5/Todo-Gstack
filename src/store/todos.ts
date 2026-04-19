@@ -125,6 +125,13 @@ export const useTodosStore = create<TodosState>()(
 
 export const selectTodos = (s: TodosState): Todo[] => s.todos
 
+/**
+ * Pure helper for filtering todos by the current filter. Safe to call in tests
+ * or inside `useMemo`, but do NOT pass directly to `useTodosStore(...)` — it
+ * returns a new `.filter()` array when filter !== 'all', which would trigger
+ * an infinite re-render loop under React 18's useSyncExternalStore (reference
+ * equality). Subscribe to `todos` and `filter` separately, then derive.
+ */
 export const selectVisibleTodos = (s: TodosState): Todo[] => {
   if (s.filter === 'active') return s.todos.filter((t) => !t.done)
   if (s.filter === 'done') return s.todos.filter((t) => t.done)
