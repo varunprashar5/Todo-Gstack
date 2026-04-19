@@ -16,7 +16,67 @@ Items deferred from the initial plan. See design doc at
   Zero runtime cost on free tiers. No secrets to configure.
 - **Depends on:** v1 shipped and stable.
 
+## P2
+
+### Multi-tab sync via `storage` event
+- **What:** Listen for `window.storage` events and call
+  `useTodosStore.persist.rehydrate()` when `todo-gstack-v1` changes.
+- **Why:** Open app in two tabs → Tab A adds a todo → Tab B is stale → Tab B writes
+  next and clobbers A's add. Classic last-write-wins bug.
+- **Pros:** ~10 lines. Fixes a real data-loss scenario.
+- **Cons:** Can surprise the user with unexpected UI updates if they're mid-edit.
+  Consider deferring rehydrate if `document.hasFocus()` is false on the stale tab.
+- **Context:** Surfaced in adversarial review. `zustand/middleware` supports cross-tab
+  sync natively — see `createJSONStorage` + subscribe pattern.
+- **Depends on:** v1 shipped.
+
 ## P3
+
+### Runtime schema validation in `migrate`
+- **What:** Validate `persistedState` shape (zod or hand-rolled) before casting.
+  Reject bad shapes and fall back to empty state.
+- **Why:** Current `persistedState as TodosState` cast trusts localStorage. A user
+  with `{ state: { todos: "not-an-array" } }` (hand-edited or corrupted) will see
+  every action throw on `.findIndex`.
+- **Pros:** Hard guarantee on rehydrated state shape.
+- **Cons:** Adds a dep (zod) or ~30 lines of hand-rolled validation. Premature if
+  only v1 exists.
+- **Context:** Do this when the v2 schema lands — the migration function becomes
+  load-bearing then.
+- **Depends on:** v2 schema change.
+
+### Persisted filter UX
+- **What:** Decide whether the last-selected filter should persist across sessions
+  or reset to `all` on load. If persisting, surface the active filter visibly so
+  a user returning to an empty "Done" view doesn't panic.
+- **Why:** Close tab with filter="done" + nothing done → reopen → "my todos are gone."
+  Rage-quit risk.
+- **Pros:** Trust-preserving UX detail.
+- **Cons:** Bike-shed risk. Could go either way.
+- **Context:** Revisit during /design-review on the live app.
+- **Depends on:** UI shipped.
+
+### Drop `@dnd-kit/sortable` dep from the store
+- **What:** Inline the 3-line `arrayMove` helper into `src/store/todos.ts` instead
+  of importing from `@dnd-kit/sortable`.
+- **Why:** The store has no other reason to depend on a UI library. Any dnd-kit
+  version bump could alter reorder semantics silently. Also bundles dnd-kit into
+  non-DnD consumers of the store.
+- **Pros:** Cleaner separation of concerns.
+- **Cons:** Trivial duplication.
+- **Context:** The function is ~3 lines of code. Just copy it.
+- **Depends on:** v1 shipped.
+
+### Memoize list selectors
+- **What:** Use `useShallow` from `zustand/shallow` for `selectVisibleTodos`, or
+  wrap in `useMemo` in consuming components.
+- **Why:** `selectVisibleTodos` returns a new array on every store update (even
+  when the filter result didn't change). Causes unnecessary re-renders of the
+  consuming component.
+- **Pros:** Perf win at ~100+ todos.
+- **Cons:** Premature under 100 todos.
+- **Context:** Measure first (React DevTools profiler) before optimizing.
+- **Depends on:** UI shipped + noticeable perf issue.
 
 ### Manual dark-mode toggle
 - **What:** Sun/moon icon button in the top-right. Overrides `prefers-color-scheme`.
